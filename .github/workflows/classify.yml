@@ -1,0 +1,71 @@
+name: classify
+
+# Classifies issues with ticket-automation-classifier and writes back labels (type:,
+# complexity:, classifier:) and one marker comment. Copy this file into your repo's
+# .github/workflows/ and replace OWNER in the action's `uses:` with the classifier's owner
+# (MrRStarkey, or your organization for a fork). Everything repo-specific (model, threshold,
+# label prefix, lock labels, ceiling) goes in .tac.yml at your repo root, not here.
+#
+# Needs one engine secret: CLAUDE_CODE_OAUTH_TOKEN (claude-code engine) or ANTHROPIC_API_KEY
+# (api engine). The first engine in `engine:` whose secret is set runs.
+#
+# An issue is classified once, when opened. Adding the `reclassify` label re-runs it (forced)
+# when whoever added it has triage or above; the run removes the label. A dispatch re-runs any
+# issue by number. A repo with public_intake limits also copies templates/drain-intake-queue.yml.
+#
+# Public intake (code_repo and sink: mirror in .tac.yml): also set the MIRROR_TOKEN secret, a
+# fine-grained token with access to code_repo and mirror_to only (Contents read on code_repo,
+# Issues read and write on mirror_to), none to this repo. The action clones code_repo with it and
+# opens the tracked issue in mirror_to; this repo's label and acknowledgement use the workflow
+# token, which needs only the issues: write below. Only issues events run this, never pull_request_target, so
+# the secret is never exposed to a fork's pull request.
+
+on:
+  issues:
+    types: [opened, labeled]
+  workflow_dispatch:
+    inputs:
+      issue_number:
+        description: Issue number to classify
+        required: true
+        type: number
+
+permissions:
+  issues: write
+  contents: read
+
+concurrency:
+  group: classify-${{ github.event.issue.number || inputs.issue_number }}
+  cancel-in-progress: false
+
+jobs:
+  classify:
+    # Other labels never start the classifier; the action gates authors and reclassify senders.
+    if: github.event_name != 'issues' || github.event.action == 'opened' || github.event.label.name == 'reclassify'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out the repo at its default branch head
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Classify and write back
+        id: classify
+        uses: MrRStarkey/ticket-automation-classifier/action@79d092d6d67d592824aab89c740df2cac26195a9
+        with:
+          issue_number: ${{ github.event.issue.number || inputs.issue_number }}
+          engine: claude-code,api
+          # Whose opened issue is classified:
+          #   members  the owner, members and collaborators only (the default); anyone else's
+          #            issue waits for a reclassify label or a dispatch.
+          #   anyone   public intake: every author. Requires public_intake limits in .tac.yml
+          #            (daily caps, account age), which bound the spend; the run fails without them.
+          issue_authors: anyone
+          force: ${{ github.event_name == 'workflow_dispatch' || github.event.action == 'labeled' }}
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          comment_authors: ${{ vars.TAC_COMMENT_AUTHORS }}
+          mirror_token: ${{ secrets.MIRROR_TOKEN }}
