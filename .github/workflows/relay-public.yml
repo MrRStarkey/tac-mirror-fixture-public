@@ -35,4 +35,4 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.RELAY_TOKEN }}
           ISSUE_NUMBER: ${{ github.event.issue.number }}
-        run: gh workflow run classify-public-intake.yml --repo MrRStarkey/tac-mirror-fixture-private -f issue_number="$ISSUE_NUMBER"
+        run: gh workflow run classify-public-intake.yml --repo MrRStarkey/tac-mirror-fixture-private --ref main -f issue_number="$ISSUE_NUMBER"
